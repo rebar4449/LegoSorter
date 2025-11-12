@@ -9,6 +9,8 @@ from robot.bin_state_tracker import BinStateTracker
 from robot.sorting.bricklink_categories_sorting_profile import (
     mkBricklinkCategoriesSortingProfile,
 )
+from robot.sorting.set_aware_profile_factory import mkSetAwareSortingProfile
+from robot.set_manager import SetManager
 from robot.our_types import SystemLifecycleStage
 from robot.vision_system import SegmentationModelManager
 from robot.sorting_state_machine import SortingStateMachine
@@ -29,7 +31,18 @@ class Controller:
         self.lifecycle_stage = SystemLifecycleStage.INITIALIZING
         self.irl_interface = irl_interface
 
-        self.sorting_profile = mkBricklinkCategoriesSortingProfile(global_config)
+        # Initialize set manager (always available via API)
+        self.set_manager = SetManager(global_config)
+
+        # Create sorting profile (set-aware if enabled, otherwise category-based)
+        enable_set_sorting = global_config.get("enable_set_sorting", False)
+        if enable_set_sorting:
+            global_config["logger"].info("Using set-aware sorting profile")
+            self.sorting_profile = mkSetAwareSortingProfile(global_config)
+        else:
+            global_config["logger"].info("Using standard BrickLink category sorting profile")
+            self.sorting_profile = mkBricklinkCategoriesSortingProfile(global_config)
+
         self.bin_state_tracker = BinStateTracker(
             global_config,
             irl_interface["distribution_modules"],

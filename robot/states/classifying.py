@@ -1,7 +1,7 @@
 import time
 import uuid
 from collections import Counter
-from typing import Optional, Dict
+from typing import Optional, Dict, Tuple
 from robot.states.base_state import BaseState
 from robot.our_types.sorting import SortingState
 from robot.our_types.known_object import KnownObject
@@ -129,9 +129,18 @@ class Classifying(BaseState):
                         )
 
                         # Determine bin coordinates for this classification
-                        bin_coordinates = self._determineBinCoordinates(
-                            most_common_category
+                        # Check if using set-aware sorting
+                        bin_coordinates, set_id = self._determineBinCoordinates(
+                            most_common_id, most_common_category
                         )
+
+                        # If this is a set piece, record it
+                        if set_id:
+                            self.logger.info(
+                                f"SET PIECE: {most_common_id} belongs to set {set_id}"
+                            )
+                            # The set manager will track this piece
+                            # TODO: Record observation ID once we have it
 
                         # Create and store known object
                         known_object = KnownObject(
@@ -180,9 +189,66 @@ class Classifying(BaseState):
         self.timeout_start_ts = None
         self.logger.info("CLEANUP: Cleared CLASSIFYING state")
 
-    def _determineBinCoordinates(self, category_id: str) -> Optional[BinCoordinates]:
+    def _determineBinCoordinates(
+        self, item_id: str, category_id: str
+    ) -> Tuple[Optional[BinCoordinates], Optional[str]]:
+        """
+        Determine bin coordinates for a classified piece
+
+        Returns:
+            Tuple of (bin_coordinates, set_id)
+            - If piece belongs to set: (set_bin_coordinates, set_id)
+            - If piece is category-only: (category_bin_coordinates, None)
+        """
+        # Check if using set-aware sorting profile
+        try:
+            from robot.sorting.set_aware_sorting_profile import SetAwareSortingProfile
+
+            sorting_profile = self.bin_state_tracker.sorting_profile
+
+            if isinstance(sorting_profile, SetAwareSortingProfile):
+                # Use set-aware logic
+                category_id_from_profile, set_destination = sorting_profile.get_destination(
+                    item_id
+                )
+
+                if set_destination and set_destination.is_set_piece:
+                    # This is a set piece, find bin for the set
+                    bin_coordinates = self.bin_state_tracker.find_bin_for_set_piece(
+                        set_destination.set_id
+                    )
+
+                    if bin_coordinates:
+                        self.logger.info(
+                            f"BINS: Assigned set piece {item_id} (set: {set_destination.set_id}) to bin {bin_coordinates}"
+                        )
+
+                        # Record that we found this piece for the set
+                        sorting_profile.record_set_piece_found(
+                            item_id, set_destination.set_id
+                        )
+
+                        return (bin_coordinates, set_destination.set_id)
+                    else:
+                        self.logger.warning(
+                            f"BINS: No available bin found for set {set_destination.set_id}, using fallback"
+                        )
+                        return (
+                            self.bin_state_tracker.fallback_bin_coordinates,
+                            set_destination.set_id,
+                        )
+
+                # Not a set piece, use category
+                if category_id_from_profile:
+                    category_id = category_id_from_profile
+
+        except ImportError:
+            # SetAwareSortingProfile not available, use category-based sorting
+            pass
+
+        # Standard category-based bin assignment
         if not category_id:
-            return None
+            return (None, None)
 
         # Use bin state tracker to find available bin for this category
         bin_coordinates = self.bin_state_tracker.findAvailableBin(category_id)
@@ -192,9 +258,9 @@ class Classifying(BaseState):
             self.logger.info(
                 f"BINS: Assigned category {category_id} to bin {bin_coordinates}"
             )
-            return bin_coordinates
+            return (bin_coordinates, None)
         else:
             self.logger.warning(
                 f"BINS: No available bin found for category {category_id}"
             )
-            return None
+            return (None, None)

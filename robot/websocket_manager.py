@@ -236,6 +236,64 @@ class WebSocketManager:
         except Exception as e:
             self.logger.error(f"Error broadcasting sorting stats: {e}")
 
+    def broadcast_set_progress(self, active_sets: list):
+        """
+        Broadcast progress updates for all active sets
+
+        Args:
+            active_sets: List of active set data with progress information
+        """
+        if not self.active_connections or not self.loop:
+            return
+
+        try:
+            message = {
+                "type": "set_progress",
+                "sets": active_sets,
+            }
+
+            message_json = json.dumps(message)
+
+            asyncio.run_coroutine_threadsafe(
+                self._broadcast_to_all(message_json), self.loop
+            )
+
+        except Exception as e:
+            self.logger.error(f"Error broadcasting set progress: {e}")
+
+    def broadcast_set_piece_found(
+        self, set_id: str, item_id: str, quantity_found: int, quantity_needed: int
+    ):
+        """
+        Broadcast when a piece is found for a set
+
+        Args:
+            set_id: The set ID
+            item_id: The piece ID that was found
+            quantity_found: How many of this piece have been found
+            quantity_needed: How many of this piece are needed
+        """
+        if not self.active_connections or not self.loop:
+            return
+
+        try:
+            message = {
+                "type": "set_piece_found",
+                "set_id": set_id,
+                "item_id": item_id,
+                "quantity_found": quantity_found,
+                "quantity_needed": quantity_needed,
+            }
+
+            message_json = json.dumps(message)
+
+            asyncio.run_coroutine_threadsafe(
+                self._broadcast_to_all(message_json), self.loop
+            )
+
+        except Exception as e:
+            self.logger.error(f"Error broadcasting set piece found: {e}")
+
     async def _send_safe(self, websocket: WebSocket, message: str):
         try:
             await websocket.send_text(message)

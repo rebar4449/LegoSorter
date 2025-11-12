@@ -13,6 +13,7 @@ from robot.piece.bricklink.types import BricklinkCategoryData
 from typing import List
 from robot.websocket_manager import WebSocketManager
 from robot.global_config import GlobalConfig
+from pydantic import BaseModel
 
 app = FastAPI()
 
@@ -155,6 +156,140 @@ async def get_bricklink_categories() -> List[BricklinkCategoryData]:
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Failed to fetch categories: {str(e)}"
+        )
+
+
+# Set management endpoints
+
+
+class SetSearchRequest(BaseModel):
+    query: str
+
+
+class SetActivateRequest(BaseModel):
+    set_num: str
+    priority: int = 0
+
+
+class SetDeactivateRequest(BaseModel):
+    set_id: str
+
+
+@app.get("/sets/search")
+async def search_sets(query: str):
+    """Search for LEGO sets on Rebrickable"""
+    try:
+        from robot.external.rebrickable import searchSets
+
+        results = searchSets(query)
+        if not results:
+            return {"results": []}
+        return results
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to search sets: {str(e)}"
+        )
+
+
+@app.post("/sets/add")
+async def add_set(set_num: str):
+    """Add a set to the database and sync its inventory"""
+    if not api_client:
+        raise HTTPException(status_code=503, detail="API not initialized")
+
+    try:
+        set_id = api_client.addSet(set_num)
+        if not set_id:
+            raise HTTPException(
+                status_code=404, detail=f"Failed to add set {set_num}"
+            )
+        return {"set_id": set_id, "success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to add set: {str(e)}")
+
+
+@app.post("/sets/activate")
+async def activate_set(request: SetActivateRequest):
+    """Activate a set for sorting"""
+    if not api_client:
+        raise HTTPException(status_code=503, detail="API not initialized")
+
+    try:
+        success = api_client.activateSet(request.set_num, request.priority)
+        if not success:
+            raise HTTPException(
+                status_code=400, detail=f"Failed to activate set {request.set_num}"
+            )
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to activate set: {str(e)}"
+        )
+
+
+@app.delete("/sets/{set_id}/deactivate")
+async def deactivate_set(set_id: str):
+    """Deactivate a set from sorting"""
+    if not api_client:
+        raise HTTPException(status_code=503, detail="API not initialized")
+
+    try:
+        success = api_client.deactivateSet(set_id)
+        if not success:
+            raise HTTPException(
+                status_code=400, detail=f"Failed to deactivate set {set_id}"
+            )
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to deactivate set: {str(e)}"
+        )
+
+
+@app.get("/sets/active")
+async def get_active_sets():
+    """Get all currently active sets"""
+    if not api_client:
+        raise HTTPException(status_code=503, detail="API not initialized")
+
+    try:
+        active_sets = api_client.getActiveSets()
+        return {"sets": active_sets}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get active sets: {str(e)}"
+        )
+
+
+@app.get("/sets/{set_id}/progress")
+async def get_set_progress(set_id: str):
+    """Get progress information for a specific set"""
+    if not api_client:
+        raise HTTPException(status_code=503, detail="API not initialized")
+
+    try:
+        progress = api_client.getSetProgress(set_id)
+        if not progress:
+            raise HTTPException(status_code=404, detail=f"Set {set_id} not found")
+        return progress
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get set progress: {str(e)}"
+        )
+
+
+@app.get("/sets/{set_id}/inventory")
+async def get_set_inventory(set_id: str):
+    """Get full inventory for a set"""
+    if not api_client:
+        raise HTTPException(status_code=503, detail="API not initialized")
+
+    try:
+        inventory = api_client.getSetInventory(set_id)
+        return {"inventory": inventory}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get set inventory: {str(e)}"
         )
 
 

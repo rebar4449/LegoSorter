@@ -1,3 +1,7 @@
+# Hardware Setup
+
+This document covers Arduino setup. For Raspberry Pi GPIO option, see [`HARDWARE_OPTIONS.md`](./HARDWARE_OPTIONS.md).
+
 ## Setup Arduino
 ```
 brew install arduino-cli

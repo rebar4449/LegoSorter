@@ -57,6 +57,7 @@ class GlobalConfig(TypedDict):
     waiting_for_object_to_appear_timeout_ms: int
     fs_object_at_end_of_second_feeder_timeout_ms: int
     state_machine_steps_per_second: int
+    enable_set_sorting: bool
 
 
 def buildGlobalConfig() -> GlobalConfig:
@@ -101,6 +102,11 @@ def buildGlobalConfig() -> GlobalConfig:
         nargs="?",
         const="latest",
         help="Use previous bin state. Optionally specify bin state ID, defaults to most recent",
+    )
+    parser.add_argument(
+        "--enable-set-sorting",
+        action="store_true",
+        help="Enable set-specific sorting (requires REBRICKABLE_API_KEY)",
     )
     args = parser.parse_args()
 
@@ -178,6 +184,7 @@ def buildGlobalConfig() -> GlobalConfig:
         "waiting_for_object_to_appear_timeout_ms": 5000,
         "fs_object_at_end_of_second_feeder_timeout_ms": 4000,
         "state_machine_steps_per_second": 15,
+        "enable_set_sorting": args.enable_set_sorting,
         "logger": Logger(debug_level),
     }
 

@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Dict
 import time
 from robot.global_config import GlobalConfig
 
@@ -30,6 +30,10 @@ class BinStateTracker:
         self.current_bin_state_id: Optional[str] = None
         self.misc_bin_coordinates: Optional[BinCoordinates] = None
         self.fallback_bin_coordinates: Optional[BinCoordinates] = None
+
+        # Set-specific bin tracking
+        self.set_bins: Dict[str, List[BinCoordinates]] = {}  # Maps set_id -> list of bin coordinates
+        self.set_bin_prefix = "set:"  # Prefix for set categories in bin state
 
         self.current_state: BinContentsMap = {}
         for coordinates in self.available_bin_coordinates:
@@ -205,6 +209,137 @@ class BinStateTracker:
     def setFallbackBin(self, coordinates: BinCoordinates) -> None:
         self.fallback_bin_coordinates = coordinates
         self.updateBinCategory(coordinates, self.fallback_category_id)
+
+    # Set-aware bin management methods
+
+    def reserve_bins_for_set(self, set_id: str, num_bins: int = 2) -> List[BinCoordinates]:
+        """
+        Reserve bins for a specific set
+
+        Args:
+            set_id: The set ID to reserve bins for
+            num_bins: Number of bins to reserve (default 2)
+
+        Returns:
+            List of bin coordinates that were reserved
+        """
+        reserved_bins = []
+
+        # Find available empty bins (excluding fallback and misc bins)
+        sorted_coordinates = sorted(
+            self.available_bin_coordinates,
+            key=lambda c: (c["distribution_module_idx"], c["bin_idx"]),
+        )
+
+        for coordinates in sorted_coordinates:
+            if len(reserved_bins) >= num_bins:
+                break
+
+            key = binCoordinatesToKey(coordinates)
+            current_category = self.current_state.get(key)
+
+            # Skip if bin is already used (fallback, misc, or has content)
+            if current_category is not None:
+                continue
+
+            # Reserve this bin for the set
+            set_category = f"{self.set_bin_prefix}{set_id}"
+            self._reserveBinInternal(coordinates, set_category)
+            reserved_bins.append(coordinates)
+
+        if reserved_bins:
+            self.set_bins[set_id] = reserved_bins
+            self.current_bin_state_id = self.saveBinState()
+            self.global_config["logger"].info(
+                f"Reserved {len(reserved_bins)} bins for set {set_id}: {reserved_bins}"
+            )
+
+            # Broadcast updated bin state
+            bin_state: BinState = {
+                "bin_contents": self.current_state,
+                "timestamp": int(time.time() * 1000),
+            }
+            self.websocket_manager.broadcast_bin_state(bin_state)
+
+        return reserved_bins
+
+    def release_set_bins(self, set_id: str) -> None:
+        """
+        Release bins that were reserved for a set
+
+        Args:
+            set_id: The set ID to release bins for
+        """
+        if set_id not in self.set_bins:
+            return
+
+        for coordinates in self.set_bins[set_id]:
+            key = binCoordinatesToKey(coordinates)
+            self.current_state[key] = None
+
+        del self.set_bins[set_id]
+        self.current_bin_state_id = self.saveBinState()
+
+        self.global_config["logger"].info(f"Released bins for set {set_id}")
+
+        # Broadcast updated bin state
+        bin_state: BinState = {
+            "bin_contents": self.current_state,
+            "timestamp": int(time.time() * 1000),
+        }
+        self.websocket_manager.broadcast_bin_state(bin_state)
+
+    def find_bin_for_set_piece(self, set_id: str) -> Optional[BinCoordinates]:
+        """
+        Find a bin for a piece that belongs to a set
+
+        Args:
+            set_id: The set ID
+
+        Returns:
+            BinCoordinates if available, None otherwise
+        """
+        # First, try to use a reserved bin for this set
+        if set_id in self.set_bins and self.set_bins[set_id]:
+            # Return the first reserved bin for this set
+            return self.set_bins[set_id][0]
+
+        # If no reserved bins, try to dynamically allocate one
+        set_category = f"{self.set_bin_prefix}{set_id}"
+
+        # Look for existing bin with this set's pieces
+        sorted_coordinates = sorted(
+            self.available_bin_coordinates,
+            key=lambda c: (c["distribution_module_idx"], c["bin_idx"]),
+        )
+
+        for coordinates in sorted_coordinates:
+            key = binCoordinatesToKey(coordinates)
+            current_category = self.current_state.get(key)
+            if current_category == set_category:
+                return coordinates
+
+        # If no existing bin, try to find an empty one
+        for coordinates in sorted_coordinates:
+            key = binCoordinatesToKey(coordinates)
+            current_category = self.current_state.get(key)
+            if current_category is None:
+                # Reserve this bin for the set
+                self._reserveBinInternal(coordinates, set_category)
+                if set_id not in self.set_bins:
+                    self.set_bins[set_id] = []
+                self.set_bins[set_id].append(coordinates)
+                self.current_bin_state_id = self.saveBinState()
+                self.global_config["logger"].info(
+                    f"Dynamically allocated bin for set {set_id}: {coordinates}"
+                )
+                return coordinates
+
+        # No available bins, use fallback
+        self.global_config["logger"].warning(
+            f"No available bins for set {set_id}, using fallback"
+        )
+        return self.fallback_bin_coordinates
 
 
 def binCoordinatesToKey(coordinates: BinCoordinates) -> str:
